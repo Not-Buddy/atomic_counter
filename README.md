@@ -10,39 +10,39 @@ graph TB
         Client["Client"]
     end
 
-    subgraph Docker Swarm – overlay network
-        Nginx["Nginx<br/>:80"]
+    subgraph swarm["Docker Swarm - overlay network"]
+        Nginx["Nginx :80"]
 
-        subgraph Gateway Replica 1
-            Axum1["Axum HTTP<br/>:3000"]
-            Redis1[("Local Redis<br/>:6379")]
-            Flush1["Self-Flush Loop<br/>every 10s"]
+        subgraph gw1["Gateway Replica 1"]
+            Axum1["Axum HTTP :3000"]
+            Redis1[("Local Redis :6379")]
+            Flush1["Self-Flush Loop every 10s"]
             Axum1 -- "INCR counter:key" --> Redis1
             Flush1 -- "SCAN + GETDEL" --> Redis1
         end
 
-        subgraph Gateway Replica 2
-            Axum2["Axum HTTP<br/>:3000"]
-            Redis2[("Local Redis<br/>:6379")]
-            Flush2["Self-Flush Loop<br/>every 10s"]
+        subgraph gw2["Gateway Replica 2"]
+            Axum2["Axum HTTP :3000"]
+            Redis2[("Local Redis :6379")]
+            Flush2["Self-Flush Loop every 10s"]
             Axum2 -- "INCR counter:key" --> Redis2
             Flush2 -- "SCAN + GETDEL" --> Redis2
         end
 
-        subgraph Gateway Replica N
-            AxumN["Axum HTTP<br/>:3000"]
-            RedisN[("Local Redis<br/>:6379")]
-            FlushN["Self-Flush Loop<br/>every 10s"]
+        subgraph gwN["Gateway Replica N"]
+            AxumN["Axum HTTP :3000"]
+            RedisN[("Local Redis :6379")]
+            FlushN["Self-Flush Loop every 10s"]
             AxumN -- "INCR counter:key" --> RedisN
             FlushN -- "SCAN + GETDEL" --> RedisN
         end
 
-        ReadCache[("Redis Read Cache<br/>(shared)")]
-        Postgres[("Postgres<br/>counters table")]
-        Aggregator["Aggregator<br/>(migration runner)"]
+        ReadCache[("Redis Read Cache - shared")]
+        Postgres[("Postgres - counters table")]
+        Aggregator["Aggregator - migration runner"]
     end
 
-    Client -- "POST /increment/:key<br/>GET /count/:key" --> Nginx
+    Client -- "POST /increment/:key\nGET /count/:key" --> Nginx
     Nginx -- "VIP gateway:3000" --> Axum1
     Nginx -- "VIP gateway:3000" --> Axum2
     Nginx -- "VIP gateway:3000" --> AxumN
