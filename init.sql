@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS counters (
+  key         VARCHAR(255) PRIMARY KEY,
+  value       BIGINT NOT NULL DEFAULT 0,
+  last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

@@ -1,0 +1,82 @@
+networks:
+  counter-net:
+    driver: overlay
+    attachable: true
+
+volumes:
+  postgres-data:
+
+services:
+
+  gateway:
+    image: atomic_counter-gateway:latest
+    build: ./gateway
+    networks: [counter-net]
+    environment:
+      - LOCAL_REDIS_HOST=localhost
+      - LOCAL_REDIS_PORT=6379
+      - READCACHE_HOST=redis-readcache
+      - READCACHE_PORT=6379
+      - PORT=3000
+      - RUST_LOG=info
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+
+  aggregator:
+    image: atomic_counter-aggregator:latest
+    build: ./aggregator
+    networks: [counter-net]
+    environment:
+      - GATEWAY_SERVICE_NAME=gateway
+      - GATEWAY_REDIS_PORT=6379
+      - FLUSH_INTERVAL_MS=10000
+      - DATABASE_URL=postgresql://counter:password@postgres:5432/counters
+      - READCACHE_HOST=redis-readcache
+      - READCACHE_PORT=6379
+      - RUST_LOG=info
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      restart_policy:
+        condition: on-failure
+
+  postgres:
+    image: postgres:16-alpine
+    networks: [counter-net]
+    environment:
+      - POSTGRES_USER=counter
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=counters
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  redis-readcache:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    networks: [counter-net]
+    deploy:
+      replicas: 1
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks: [counter-net]
+    deploy:
+      replicas: 1
+    depends_on:
+      - gateway
