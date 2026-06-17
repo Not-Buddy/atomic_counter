@@ -26,9 +26,22 @@ async fn main() {
 
     let config = Config::from_env();
 
-    let pool = sqlx::PgPool::connect(&config.database_url)
-        .await
-        .expect("Failed to connect to Postgres");
+    let pool = {
+        let mut attempts = 0;
+        loop {
+            match sqlx::PgPool::connect(&config.database_url).await {
+                Ok(pool) => break pool,
+                Err(e) => {
+                    attempts += 1;
+                    if attempts >= 10 {
+                        panic!("Failed to connect to Postgres after {} attempts: {}", attempts, e);
+                    }
+                    tracing::warn!("Postgres not ready (attempt {}): {}, retrying in 3s...", attempts, e);
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                }
+            }
+        }
+    };
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS counters (

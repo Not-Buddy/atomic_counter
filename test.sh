@@ -11,7 +11,7 @@ echo "Sending ${TOTAL} increment requests..."
 
 for i in $(seq 1 "${TOTAL}"); do
   (
-    if curl -f -s -o /dev/null -X POST "http://localhost/increment/${KEY}"; then
+    if curl -f -s -o /dev/null -X POST "http://127.0.0.1:8080/increment/${KEY}"; then
       echo "OK"
     else
       echo "FAIL"
@@ -30,5 +30,5 @@ echo "Waiting 20s for gateway self-flush..."
 sleep 20
 
 echo "Reading count for key=${KEY}..."
-curl -s "http://localhost/count/${KEY}" | jq .
+curl -s "http://127.0.0.1:8080/count/${KEY}" | jq .
 echo "Expected: ${TOTAL}"

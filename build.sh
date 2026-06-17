@@ -2,7 +2,7 @@
 set -e
 
 echo "Building Docker images..."
-docker compose build
+docker compose build --no-cache
 
 echo ""
 echo "Built images:"

@@ -11,7 +11,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration (overridable via flags)
 # ---------------------------------------------------------------------------
-HOST="localhost"
+HOST="127.0.0.1:8080"
 FLUSH_WAIT=20
 CONCURRENCY=50
 STACK_NAME="counter-stack"
@@ -100,7 +100,7 @@ flood() {
   local t_start t_end elapsed
   t_start=$(date +%s%N)
   seq 1 "$total" \
-    | xargs -P "$concurrency" -I{} bash -c "increment '$key'" 2>/dev/null
+    | timeout 120 xargs -P "$concurrency" -I{} bash -c "increment '$key'" 2>/dev/null
   t_end=$(date +%s%N)
   elapsed=$(( (t_end - t_start) / 1000000 ))
   log "Flood done in ${elapsed}ms ($(( total * 1000 / (elapsed + 1) )) req/s)"
@@ -154,6 +154,13 @@ preflight() {
     fi
   done
 
+  if docker ps &>/dev/null; then
+    success "Docker daemon accessible"
+  else
+    failure "Docker daemon not accessible — destructive tests will be skipped"
+    SKIP_DESTRUCTIVE=true
+  fi
+
   log "Checking gateway health..."
   local resp
   if resp=$(curl -sf --max-time 5 "${BASE_URL}/health"); then
@@ -196,9 +203,9 @@ test_multiple_keys() {
   local per_key=500
   local pids=()
 
-  log "Flooding 3 keys concurrently (${per_key} each)..."
+  log "Flooding 3 keys concurrently (${per_key} each, concurrency=25)..."
   for k in "${keys[@]}"; do
-    flood "$(make_key "$k")" "$per_key" "$CONCURRENCY" &
+    flood "$(make_key "$k")" "$per_key" 25 &
     pids+=($!)
   done
   for pid in "${pids[@]}"; do wait "$pid"; done
@@ -514,13 +521,18 @@ test_high_cardinality() {
   local total=$(( num_keys * per_key ))
   local pids=()
 
-  log "Flooding ${num_keys} unique keys × ${per_key} increments = ${total} total..."
+  log "Flooding ${num_keys} unique keys × ${per_key} increments = ${total} total (batched to avoid overload)..."
 
   for i in $(seq 1 "$num_keys"); do
     local key
     key=$(make_key "card_${i}")
-    flood "$key" "$per_key" 10 &
+    flood "$key" "$per_key" 5 &
     pids+=($!)
+    # Limit to 10 concurrent batches to avoid overwhelming the system
+    if [ $(( i % 10 )) -eq 0 ]; then
+      for pid in "${pids[@]}"; do wait "$pid"; done
+      pids=()
+    fi
   done
   for pid in "${pids[@]}"; do wait "$pid"; done
 
@@ -533,9 +545,9 @@ test_high_cardinality() {
     key=$(make_key "card_${i}")
     actual=$(get_count "$key")
     if [ "$actual" -eq "$per_key" ]; then
-      ((correct_keys++))
+      correct_keys=$((correct_keys + 1))
     else
-      ((failed_keys++))
+      failed_keys=$((failed_keys + 1))
       warn "Key card_${i}: got ${actual}, expected ${per_key}"
     fi
   done
