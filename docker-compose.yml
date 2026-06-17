@@ -17,6 +17,8 @@ services:
       - LOCAL_REDIS_PORT=6379
       - READCACHE_HOST=redis-readcache
       - READCACHE_PORT=6379
+      - DATABASE_URL=postgresql://counter:password@postgres:5432/counters
+      - FLUSH_INTERVAL_MS=10000
       - PORT=3000
       - RUST_LOG=info
     deploy:
@@ -33,12 +35,7 @@ services:
     build: ./aggregator
     networks: [counter-net]
     environment:
-      - GATEWAY_SERVICE_NAME=gateway
-      - GATEWAY_REDIS_PORT=6379
-      - FLUSH_INTERVAL_MS=10000
       - DATABASE_URL=postgresql://counter:password@postgres:5432/counters
-      - READCACHE_HOST=redis-readcache
-      - READCACHE_PORT=6379
       - RUST_LOG=info
     deploy:
       replicas: 1

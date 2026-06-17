@@ -1,3 +1,4 @@
+mod flush;
 mod local_redis;
 mod readcache;
 mod routes;
@@ -17,6 +18,8 @@ struct Config {
     readcache_host: String,
     readcache_port: u16,
     port: u16,
+    database_url: String,
+    flush_interval_ms: u64,
 }
 
 impl Config {
@@ -38,6 +41,12 @@ impl Config {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(3000),
+            database_url: std::env::var("DATABASE_URL")
+                .expect("DATABASE_URL must be set"),
+            flush_interval_ms: std::env::var("FLUSH_INTERVAL_MS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10000),
         }
     }
 }
@@ -60,7 +69,7 @@ async fn main() {
     let local_conn = redis::aio::ConnectionManager::new(local_client)
         .await
         .expect("Failed to connect to local Redis");
-    let local_redis = LocalRedis::new(local_conn);
+    let local_redis = LocalRedis::new(local_conn.clone());
 
     let readcache_url = format!(
         "redis://{}:{}",
@@ -71,7 +80,48 @@ async fn main() {
     let readcache_conn = redis::aio::ConnectionManager::new(readcache_client)
         .await
         .expect("Failed to connect to read cache Redis");
-    let readcache = ReadCache::new(readcache_conn);
+    let readcache = ReadCache::new(readcache_conn.clone());
+
+    // Connect to Postgres for self-flushing (retry up to 30s for startup ordering)
+    let pool = {
+        let mut attempts = 0;
+        loop {
+            match sqlx::PgPool::connect(&config.database_url).await {
+                Ok(pool) => break pool,
+                Err(e) => {
+                    attempts += 1;
+                    if attempts >= 10 {
+                        panic!("Failed to connect to Postgres after {} attempts: {}", attempts, e);
+                    }
+                    tracing::warn!("Postgres not ready (attempt {}): {}, retrying in 3s...", attempts, e);
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                }
+            }
+        }
+    };
+
+    // Ensure the counters table exists (idempotent migration)
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS counters (
+            key         VARCHAR(255) PRIMARY KEY,
+            value       BIGINT NOT NULL DEFAULT 0,
+            last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("Failed to run migration");
+
+    // Spawn the self-flush loop: this gateway replica periodically drains
+    // its own local Redis → Postgres → read cache. No cross-container
+    // connections needed, completely avoiding Docker Swarm IPVS issues.
+    let flush_interval = config.flush_interval_ms;
+    tokio::spawn(flush::flush_loop(
+        local_conn,
+        pool,
+        readcache_conn,
+        flush_interval,
+    ));
 
     let state = Arc::new(AppState {
         local_redis: Mutex::new(local_redis),
@@ -82,6 +132,7 @@ async fn main() {
         .route("/increment/:key", post(routes::increment))
         .route("/count/:key", get(routes::count))
         .route("/health", get(routes::health))
+        .route("/flush", post(routes::flush))
         .with_state(state.clone());
 
     let bind_addr = format!("0.0.0.0:{}", config.port);

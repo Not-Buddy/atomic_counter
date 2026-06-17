@@ -26,7 +26,7 @@ rm -f /tmp/ctr_results
 
 echo "Results: ${SUCCESS} succeeded, ${FAIL} failed"
 
-echo "Waiting 20s for aggregator to flush..."
+echo "Waiting 20s for gateway self-flush..."
 sleep 20
 
 echo "Reading count for key=${KEY}..."

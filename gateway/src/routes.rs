@@ -40,3 +40,23 @@ pub async fn health() -> Json<Value> {
         .unwrap_or_else(|_| "unknown".to_string());
     Json(json!({ "status": "ok", "replica": host }))
 }
+
+/// Called by the aggregator to atomically drain all counter deltas from this
+/// replica's local Redis. Returns a JSON map of `{ key: delta }` pairs.
+/// Using HTTP on port 3000 avoids the Docker Swarm IPVS issue that blocks
+/// direct container-IP connections to the embedded Redis on port 6379.
+pub async fn flush(
+    State(state): State<Arc<AppState>>,
+) -> Json<Value> {
+    let local = state.local_redis.lock().await;
+    match local.scan_and_getdel().await {
+        Ok(map) => {
+            tracing::info!("Flush endpoint: drained {} keys", map.len());
+            Json(json!(map))
+        }
+        Err(e) => {
+            tracing::error!("Flush endpoint failed: {}", e);
+            Json(json!({ "error": format!("{}", e) }))
+        }
+    }
+}
