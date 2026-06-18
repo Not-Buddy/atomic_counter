@@ -90,16 +90,39 @@ pub async fn flush_loop(
             continue;
         }
 
-        // Update the shared read cache with the new totals from Postgres
+        // Update the shared read cache with an atomic compare-and-set.
+        // Multiple replicas flush concurrently — a plain SET would let a
+        // stale (lower) total clobber a correct (higher) one.  This Lua
+        // script only writes when the new value is strictly greater.
         for (key, total) in &totals {
             let mut con = readcache.clone();
-            if let Err(e) = redis::cmd("SET")
-                .arg(format!("counter:{}", key))
-                .arg(*total)
-                .query_async::<_, ()>(&mut con)
-                .await
-            {
-                tracing::error!("Failed to update read cache for key {}: {}", key, e);
+            let redis_key = format!("counter:{}", key);
+            let result: Result<Option<String>, _> = redis::cmd("EVAL")
+                .arg(
+                    "local cur = redis.call('GET', KEYS[1]) \
+                     if not cur or tonumber(ARGV[1]) > tonumber(cur) then \
+                         return redis.call('SET', KEYS[1], ARGV[1]) \
+                     end \
+                     return nil",
+                )
+                .arg(1)                    // number of keys
+                .arg(&redis_key)           // KEYS[1]
+                .arg(*total)               // ARGV[1]
+                .query_async(&mut con)
+                .await;
+            match result {
+                Ok(Some(resp)) => {
+                    tracing::debug!("Read cache updated for {} → {} ({})", key, total, resp);
+                }
+                Ok(None) => {
+                    tracing::debug!(
+                        "Read cache CAS skipped for {} ({} <= current)",
+                        key, total
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("Failed to update read cache for key {}: {}", key, e);
+                }
             }
         }
 

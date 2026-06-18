@@ -2,7 +2,7 @@
 set -e
 
 KEY="test_$(date +%s)"
-TOTAL=1000
+TOTAL=10000
 SUCCESS=0
 FAIL=0
 
