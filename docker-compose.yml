@@ -66,6 +66,22 @@ services:
     deploy:
       replicas: 1
 
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    ports:
+      - "9000:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    networks: [counter-net]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
   nginx:
     image: nginx:alpine
     ports:
